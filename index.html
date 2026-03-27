@@ -1,0 +1,273 @@
+ <!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Geometry Dash JS - Records</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Righteous&display=swap');
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Righteous', cursive; color: white; user-select: none; }
+        canvas { display: block; }
+        
+        /* Capas de UI */
+        .ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            background: radial-gradient(circle, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.9) 100%);
+            z-index: 100; transition: opacity 0.2s;
+        }
+        .hidden { display: none !important; }
+
+        .title { font-size: 70px; color: #fff; text-shadow: 0 0 20px #00fbff; margin-bottom: 20px; text-transform: uppercase; }
+        .record-text { font-size: 20px; color: #ffd700; margin-bottom: 30px; text-shadow: 2px 2px #000; }
+        
+        .play-btn {
+            width: 120px; height: 120px; background: #2ed573; border-radius: 20%;
+            border: 6px solid #fff; cursor: pointer; display: flex; align-items: center;
+            justify-content: center; box-shadow: 0 0 30px rgba(46, 213, 115, 0.4);
+        }
+        .play-btn div { width: 0; height: 0; border-top: 25px solid transparent; border-bottom: 25px solid transparent; border-left: 45px solid white; margin-left: 10px; }
+        
+        .menu-footer { margin-top: 20px; display: flex; gap: 15px; }
+        .btn-small { padding: 10px 20px; background: #333; border: 2px solid #fff; border-radius: 5px; cursor: pointer; color: white; font-size: 14px; }
+
+        /* Botón de Salir durante el juego */
+        #ingame-controls {
+            position: absolute; top: 20px; right: 20px; z-index: 10; display: flex; gap: 10px;
+        }
+        .exit-btn { background: rgba(255, 71, 87, 0.6); border: 2px solid #fff; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; pointer-events: auto; }
+        .exit-btn:hover { background: rgba(255, 71, 87, 1); }
+
+        /* Skins */
+        .skin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
+        .skin-item { width: 50px; height: 50px; border: 3px solid #fff; cursor: pointer; }
+        .skin-item.active { border-color: #ffd700; transform: scale(1.1); }
+
+        #game-ui { position: absolute; top: 20px; width: 100%; pointer-events: none; z-index: 5; text-align: center; }
+        .attempts-label { position: absolute; left: 20px; font-size: 18px; }
+        #progress-bar { display: inline-block; width: 35%; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; border: 1px solid #fff; overflow: hidden; vertical-align: middle; }
+        #progress-fill { width: 0%; height: 100%; background: #00fbff; }
+    </style>
+</head>
+<body>
+
+    <div id="menu-main" class="ui-layer">
+        <div class="title">GEOMETRY JS</div>
+        <div id="record-display" class="record-text">MÍNIMO DE INTENTOS: --</div>
+        <div class="play-btn" onclick="startGame()"><div></div></div>
+        <div class="menu-footer">
+            <button class="btn-small" onclick="showSkins()">SKINS</button>
+            <button class="btn-small" style="background: #57606f;" onclick="resetRecord()">BORRAR RÉCORD</button>
+        </div>
+    </div>
+
+    <div id="menu-skins" class="ui-layer hidden">
+        <div class="title" style="font-size: 40px;">SKINS</div>
+        <div class="skin-grid" id="skin-grid"></div>
+        <button class="btn-small" style="background: #ff4757;" onclick="showMain()">VOLVER</button>
+    </div>
+
+    <div id="game-ui" class="hidden">
+        <div class="attempts-label">INTENTO: <span id="att-count">1</span></div>
+        <div id="progress-bar"><div id="progress-fill"></div></div>
+        <div id="ingame-controls">
+            <button class="exit-btn" onclick="exitToMenu()">MENÚ</button>
+        </div>
+    </div>
+
+    <canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+const CFG = { G: 3.0, JUMP: -30, SPEED: 620, SIZE: 50, GROUND_PCT: 0.8 };
+let state = { 
+    mode: 'MENU', 
+    dist: 0, 
+    attempts: 1, 
+    isPressing: false, 
+    currentSkin: 0,
+    bestRecord: localStorage.getItem('gdBestRecord') || null
+};
+const player = { x: 200, y: 0, vy: 0, rot: 0 };
+
+const skins = [
+    { main: '#00fbff', glow: '#00fbff88' }, { main: '#2ed573', glow: '#2ed57388' },
+    { main: '#ff4757', glow: '#ff475788' }, { main: '#ffd700', glow: '#ffd70088' },
+    { main: '#ff00ff', glow: '#ff00ff88' }, { main: '#1e90ff', glow: '#1e90ff88' }
+];
+
+const levelMap = [
+    {x: 800, t:'s'}, {x: 1200, t:'s'}, {x: 1260, t:'s'},
+    {x: 1700, t:'b', y:0}, {x: 1900, t:'p', y:0}, 
+    {x: 2400, t:'s'}, {x: 2460, t:'s'}, {x: 2520, t:'s'},
+    {x: 3000, t:'b', y:0}, {x: 3120, t:'b', y:1}, {x: 3240, t:'b', y:2}, 
+    {x: 3450, t:'p', y:2},
+    {x: 4200, t:'ms'}, {x: 4350, t:'ms'}, {x: 4500, t:'s'},
+    {x: 5000, t:'b', y:0}, {x: 5000, t:'s', y:1},
+    {x: 5400, t:'b', y:1}, {x: 5400, t:'s', y:2},
+    {x: 5800, t:'s'}, {x: 5860, t:'s'},
+    {x: 6500, t:'f'}
+];
+
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+window.onresize = resize; resize();
+updateRecordDisplay();
+
+function updateRecordDisplay() {
+    const display = document.getElementById('record-display');
+    display.innerText = state.bestRecord ? `MEJOR RÉCORD: ${state.bestRecord} INTENTOS` : "SIN RÉCORD AÚN";
+}
+
+function resetRecord() {
+    if(confirm("¿Seguro que quieres borrar tu récord?")) {
+        localStorage.removeItem('gdBestRecord');
+        state.bestRecord = null;
+        updateRecordDisplay();
+    }
+}
+
+function showSkins() {
+    document.getElementById('menu-main').classList.add('hidden');
+    document.getElementById('menu-skins').classList.remove('hidden');
+    const grid = document.getElementById('skin-grid');
+    grid.innerHTML = '';
+    skins.forEach((s, i) => {
+        const d = document.createElement('div');
+        d.className = `skin-item ${i === state.currentSkin ? 'active' : ''}`;
+        d.style.backgroundColor = s.main;
+        d.onclick = () => { state.currentSkin = i; showSkins(); };
+        grid.appendChild(d);
+    });
+}
+function showMain() { 
+    document.getElementById('menu-skins').classList.add('hidden'); 
+    document.getElementById('menu-main').classList.remove('hidden'); 
+    updateRecordDisplay();
+}
+
+function exitToMenu() {
+    state.mode = 'MENU';
+    document.getElementById('game-ui').classList.add('hidden');
+    document.getElementById('menu-main').classList.remove('hidden');
+    updateRecordDisplay();
+}
+
+function startGame() {
+    document.getElementById('menu-main').classList.add('hidden');
+    document.getElementById('game-ui').classList.remove('hidden');
+    state.mode = 'PLAYING';
+    state.dist = 0;
+    state.attempts = 1;
+    document.getElementById('att-count').innerText = state.attempts;
+    resetP();
+    requestAnimationFrame(loop);
+}
+
+function resetP() { player.y = canvas.height * CFG.GROUND_PCT - CFG.SIZE; player.vy = 0; player.rot = 0; }
+
+function die() {
+    state.attempts++;
+    document.getElementById('att-count').innerText = state.attempts;
+    state.dist = 0;
+    resetP();
+}
+
+function win() {
+    if (!state.bestRecord || state.attempts < state.bestRecord) {
+        state.bestRecord = state.attempts;
+        localStorage.setItem('gdBestRecord', state.bestRecord);
+        alert(`¡NUEVO RÉCORD! Completado en ${state.attempts} intentos.`);
+    } else {
+        alert(`¡Nivel Completado! Intentos esta vez: ${state.attempts}`);
+    }
+    exitToMenu();
+}
+
+function update(dt) {
+    if (state.mode !== 'PLAYING') return;
+    state.dist += CFG.SPEED * dt;
+    player.vy += CFG.G;
+    player.y += player.vy;
+
+    const groundY = canvas.height * CFG.GROUND_PCT - CFG.SIZE;
+    let grounded = false;
+
+    levelMap.forEach(obj => {
+        let ox = obj.x - state.dist + player.x;
+        let oy = (canvas.height * CFG.GROUND_PCT) - (obj.y || 0) * 60;
+        let p = { l: player.x+10, r: player.x+CFG.SIZE-10, t: player.y+10, b: player.y+CFG.SIZE };
+
+        if (obj.t === 's' || obj.t === 'ms') {
+            let h = obj.t === 'ms' ? 30 : 55;
+            if (p.r > ox+15 && p.l < ox+45 && p.b > oy-h && p.t < oy) die();
+        } 
+        else if (obj.t === 'b') {
+            if (p.r > ox && p.l < ox+60 && p.b > oy-60 && p.t < oy) {
+                if (player.vy > 0 && p.b < oy - 30) {
+                    player.y = oy - 60 - CFG.SIZE; player.vy = 0; grounded = true;
+                    if (state.isPressing) player.vy = CFG.JUMP;
+                } else { die(); }
+            }
+        }
+        else if (obj.t === 'p' && p.r > ox && p.l < ox+60 && p.b > oy-15 && p.t < oy) player.vy = CFG.JUMP * 1.3;
+        else if (obj.t === 'f' && player.x > ox) { win(); }
+    });
+
+    if (player.y >= groundY) { player.y = groundY; player.vy = 0; grounded = true; if (state.isPressing) player.vy = CFG.JUMP; }
+    player.rot = grounded ? Math.round(player.rot/90)*90 : player.rot + 8;
+
+    let finishX = levelMap.find(o => o.t === 'f').x;
+    document.getElementById('progress-fill').style.width = Math.min((state.dist/finishX)*100, 100) + "%";
+}
+
+function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    let skin = skins[state.currentSkin];
+    ctx.fillStyle = '#000510'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#000a20'; ctx.fillRect(0, canvas.height*CFG.GROUND_PCT, canvas.width, canvas.height);
+    ctx.strokeStyle = skin.main; ctx.lineWidth = 4; ctx.strokeRect(-2, canvas.height*CFG.GROUND_PCT, canvas.width+4, 2);
+
+    levelMap.forEach(obj => {
+        let ox = obj.x - state.dist + player.x;
+        let oy = canvas.height*CFG.GROUND_PCT - (obj.y || 0)*60;
+        if (ox < -100 || ox > canvas.width+100) return;
+
+        if (obj.t === 's' || obj.t === 'ms') {
+            ctx.fillStyle = "#ff2e2e"; ctx.beginPath();
+            let h = obj.t === 'ms' ? 30 : 55;
+            ctx.moveTo(ox, oy); ctx.lineTo(ox+30, oy-h); ctx.lineTo(ox+60, oy); ctx.fill();
+            ctx.strokeStyle = "white"; ctx.stroke();
+        } else if (obj.t === 'b') {
+            ctx.fillStyle = "#1a1a1a"; ctx.fillRect(ox, oy-60, 60, 60);
+            ctx.strokeStyle = skin.main; ctx.strokeRect(ox, oy-60, 60, 60);
+        } else if (obj.t === 'p') {
+            ctx.fillStyle = "#ffd700"; ctx.beginPath(); ctx.ellipse(ox+30, oy-8, 25, 8, 0, 0, Math.PI*2); ctx.fill();
+        }
+    });
+
+    if (state.mode === 'PLAYING') {
+        ctx.save(); ctx.translate(player.x+25, player.y+25); ctx.rotate(player.rot*Math.PI/180);
+        ctx.shadowBlur = 15; ctx.shadowColor = skin.main; ctx.fillStyle = skin.main;
+        ctx.fillRect(-25,-25,50,50); ctx.strokeStyle = "white"; ctx.lineWidth = 3; ctx.strokeRect(-25,-25,50,50);
+        ctx.restore();
+    }
+}
+
+function loop(t) {
+    let dt = (t - (loop.lt || t)) / 1000; loop.lt = t;
+    update(dt > 0.1 ? 0.1 : dt); draw();
+    if (state.mode === 'PLAYING') requestAnimationFrame(loop);
+}
+
+const input = (val) => state.isPressing = val;
+window.addEventListener('keydown', (e) => { if(e.code==='Space' || e.code==='ArrowUp') input(true); });
+window.addEventListener('keyup', (e) => { if(e.code==='Space' || e.code==='ArrowUp') input(false); });
+window.addEventListener('mousedown', (e) => { if(state.mode === 'PLAYING' && e.target.tagName !== 'BUTTON') input(true); });
+window.addEventListener('mouseup', () => input(false));
+window.addEventListener('touchstart', (e) => { if(state.mode === 'PLAYING' && e.target.tagName !== 'BUTTON') { e.preventDefault(); input(true); } });
+window.addEventListener('touchend', () => input(false));
+
+</script>
+</body>
+</html>
